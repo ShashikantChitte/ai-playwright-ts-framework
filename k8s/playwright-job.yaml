@@ -1,0 +1,39 @@
+# Sharded Playwright run on Kubernetes (e.g. AKS). One pod per shard via an Indexed Job.
+#   kubectl create secret generic pw-secrets --from-env-file=.env
+#   kubectl apply -f k8s/playwright-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: playwright-run
+spec:
+  completionMode: Indexed
+  completions: 4
+  parallelism: 4
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: tests
+          image: <your-acr>.azurecr.io/pw-framework:latest
+          envFrom: [{ secretRef: { name: pw-secrets } }]
+          env: [{ name: CI, value: 'true' }]
+          command: ['/bin/sh', '-c']
+          args:
+            - |
+              npm run test -- --shard=$((JOB_COMPLETION_INDEX+1))/4; rc=$?
+              mkdir -p /results/shard-$JOB_COMPLETION_INDEX
+              cp -r blob-report test-results/flaky /results/shard-$JOB_COMPLETION_INDEX/ 2>/dev/null
+              exit $rc
+          resources:
+            requests: { cpu: '1', memory: 2Gi }
+            limits: { cpu: '2', memory: 4Gi }
+          volumeMounts:
+            - { name: shm, mountPath: /dev/shm }
+            - { name: results, mountPath: /results }
+      volumes:
+        - name: shm
+          emptyDir: { medium: Memory, sizeLimit: 1Gi }   # Chromium needs a large /dev/shm
+        - name: results
+          persistentVolumeClaim: { claimName: pw-results } # Azure Files (RWX); merge with `playwright merge-reports`

@@ -1,0 +1,43 @@
+name: playwright
+on:
+  pull_request:
+  push: { branches: [main] }
+  schedule: [{ cron: '0 1 * * *' }]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck && npm run lint && npm run test:unit
+
+  test:
+    needs: quality
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      options: --ipc=host --init
+    strategy:
+      fail-fast: false
+      matrix: { shard: [1, 2, 3, 4] }
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run test -- --shard=${{ matrix.shard }}/4 ${{ github.event_name == 'pull_request' && '--grep @smoke' || '' }}
+        env:
+          CI: 'true'
+          SHOP_USER_EMAIL: ${{ secrets.SHOP_USER_EMAIL }}
+          SHOP_USER_PASSWORD: ${{ secrets.SHOP_USER_PASSWORD }}
+          API_USER_EMAIL: ${{ secrets.API_USER_EMAIL }}
+          API_USER_PASSWORD: ${{ secrets.API_USER_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: |
+            blob-report
+            test-results/flaky
+          retention-days: 7

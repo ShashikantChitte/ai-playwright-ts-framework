@@ -1,0 +1,47 @@
+{
+  "name": "pw-test-architecture",
+  "version": "1.0.0",
+  "description": "Enterprise Playwright + TypeScript framework: Web + API, CI/CD, Docker, AI-assisted testing",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "playwright test --project=chromium --project=firefox --project=webkit --project=mobile-chrome --project=api",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:web": "playwright test --project=chromium --project=firefox --project=webkit --project=mobile-chrome",
+    "test:api": "playwright test --project=api",
+    "test:chromium": "playwright test --project=chromium",
+    "test:headed": "playwright test --headed --project=chromium",
+    "test:ui": "playwright test --ui",
+    "test:quarantine": "RUN_QUARANTINE=true playwright test --grep @quarantine",
+    "test:docker": "docker compose run --rm tests",
+    "report": "playwright show-report",
+    "codegen": "playwright codegen",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "ai:generate": "tsx scripts/generate-tests.ts",
+    "ai:generate-api": "tsx scripts/generate-api-tests.ts",
+    "ai:flaky": "tsx scripts/analyze-flaky.ts",
+    "ai:healing": "tsx scripts/healing-report.ts",
+    "ai:triage": "tsx scripts/ai-triage.ts",
+    "mock:api": "tsx scripts/mock-api-server.ts",
+    "test:api:mock": "API_BASE_URL=http://localhost:4010/api/v1 playwright test --project=api",
+    "test:unit": "playwright test --project=unit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "1.65.1",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  }
+}
