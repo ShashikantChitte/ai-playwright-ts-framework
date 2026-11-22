@@ -1,8 +1,24 @@
 name: playwright
+
 on:
-  pull_request:
   push: { branches: [main] }
-  schedule: [{ cron: '0 1 * * *' }]
+  pull_request:
+  schedule: [{ cron: '0 1 * * *' }]        # nightly full run
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: smoke (chromium, verified tests) or full (all browsers + API, 4 shards)
+        type: choice
+        default: smoke
+        options: [smoke, full]
+
+env:
+  CI: 'true'
+  # Optional repo secrets. If unset, the framework falls back to the public demo credentials.
+  SHOP_USER_EMAIL: ${{ secrets.SHOP_USER_EMAIL }}
+  SHOP_USER_PASSWORD: ${{ secrets.SHOP_USER_PASSWORD }}
+  API_USER_EMAIL: ${{ secrets.API_USER_EMAIL }}
+  API_USER_PASSWORD: ${{ secrets.API_USER_PASSWORD }}
 
 jobs:
   quality:
@@ -14,8 +30,29 @@ jobs:
       - run: npm ci
       - run: npm run typecheck && npm run lint && npm run test:unit
 
-  test:
+  # Fast gate on every push/PR: verified @smoke tests on Chromium.
+  smoke:
     needs: quality
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.scope == 'smoke')
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
+      options: --ipc=host --init
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run test:smoke -- --project=chromium
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: smoke-results
+          path: test-results
+          retention-days: 7
+
+  # Nightly / on demand: everything, sharded.
+  full:
+    needs: quality
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.65.1-noble
@@ -26,18 +63,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: npm ci
-      - run: npm run test -- --shard=${{ matrix.shard }}/4 ${{ github.event_name == 'pull_request' && '--grep @smoke' || '' }}
-        env:
-          CI: 'true'
-          SHOP_USER_EMAIL: ${{ secrets.SHOP_USER_EMAIL }}
-          SHOP_USER_PASSWORD: ${{ secrets.SHOP_USER_PASSWORD }}
-          API_USER_EMAIL: ${{ secrets.API_USER_EMAIL }}
-          API_USER_PASSWORD: ${{ secrets.API_USER_PASSWORD }}
+      - run: npm run test -- --shard=${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: blob-report-${{ matrix.shard }}
+          name: full-results-${{ matrix.shard }}
           path: |
             blob-report
-            test-results/flaky
+            test-results
           retention-days: 7

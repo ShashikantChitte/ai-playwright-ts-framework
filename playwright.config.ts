@@ -10,7 +10,8 @@ const reporters: ReporterDescription[] = env.CI
       ['junit', { outputFile: 'test-results/junit.xml' }],
       ['json', { outputFile: 'test-results/results.json' }],
       ['./reporters/flaky-reporter.ts'],
-      ['dot'],
+      ['list'],
+      ...(process.env.GITHUB_ACTIONS ? ([['github']] as ReporterDescription[]) : []),
     ]
   : [
       ['list'],
@@ -71,6 +72,15 @@ export default defineConfig({
       testMatch: webTests,
       dependencies: ['setup'],
       use: { ...devices['Pixel 7'], storageState: AUTH_FILE },
+    },
+
+    // Locator discovery: logs in, then saves an accessibility snapshot + data-testids of chosen pages.
+    // Run explicitly: npx playwright test --project=discover   (see tests/discover/snapshot.spec.ts)
+    {
+      name: 'discover',
+      testMatch: /tests\/discover\/.*\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: AUTH_FILE },
     },
 
     // Framework self-tests (pure logic, no browser, no network).

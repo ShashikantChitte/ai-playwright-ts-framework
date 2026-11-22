@@ -9,38 +9,34 @@ const bool = (def: boolean) =>
   z
     .string()
     .optional()
-    .transform((v) =>
-      v === undefined || v === '' ? def : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase()),
-    );
-const clean = (v?: string) => {
-  const t = (v ?? '').split('#')[0]!.trim();
+    .transform((v) => (v === undefined || v === '' ? def : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase())));
+
+/** Treat "", whitespace and inline "# comments" as unset (GitHub passes missing secrets as ""). */
+const unset = (v: unknown) => {
+  if (typeof v !== 'string') return v;
+  const t = v.split('#')[0]!.trim();
   return t === '' ? undefined : t;
 };
+const str = (def: string) => z.preprocess(unset, z.string().default(def));
+const url = (def: string) => z.preprocess(unset, z.string().url().default(def));
 
 const schema = z.object({
   TEST_ENV: z.enum(['dev', 'qa', 'prod']).default('prod'),
-  BASE_URL: z.string().url().default('https://shop.qaautomationlabs.com'),
-  API_BASE_URL: z.string().url().default('https://testing.qaautomationlabs.com/api/v1'),
+  BASE_URL: url('https://shop.qaautomationlabs.com'),
+  API_BASE_URL: url('https://testing.qaautomationlabs.com/api/v1'),
 
-  SHOP_USER_EMAIL: z.string().default('demo@demo.com'),
-  SHOP_USER_PASSWORD: z.string().default('demo'),
-  API_USER_EMAIL: z.string().default('qa@demo.io'),
-  API_USER_PASSWORD: z.string().default('Password123'),
+  SHOP_USER_EMAIL: str('demo@demo.com'),
+  SHOP_USER_PASSWORD: str('demo'),
+  API_USER_EMAIL: str('qa@demo.io'),
+  API_USER_PASSWORD: str('Password123'),
 
   CI: bool(false),
   HEADLESS: bool(true),
   WORKERS: z
-    .string()
-    .optional()
-    .transform(clean)
-    .refine(
-      (v) => v === undefined || /^\d+%?$/.test(v),
-      'WORKERS must be a number or a percentage like 50%',
-    ),
+    .preprocess(unset, z.string().optional())
+    .refine((v) => v === undefined || /^\d+%?$/.test(v), 'WORKERS must be a number or a percentage like 50%'),
   RETRIES: z
-    .string()
-    .optional()
-    .transform(clean)
+    .preprocess(unset, z.string().optional())
     .refine((v) => v === undefined || /^\d+$/.test(v), 'RETRIES must be a whole number'),
   TRACE: z.enum(['on', 'off', 'retain-on-failure', 'on-first-retry']).default('on-first-retry'),
   RUN_QUARANTINE: bool(false),
@@ -70,9 +66,6 @@ function parseHeaders(json?: string): Record<string, string> {
     throw new Error('EXTRA_HTTP_HEADERS must be a JSON object of string values');
   }
 }
-
-/** Drops inline "# comments" and blanks (Docker env_file keeps them in some cases). */
-
 
 export const env = {
   ...raw,
