@@ -1,0 +1,151 @@
+# Azure DevOps - Playwright Web + API
+# Required: variable group "playwright-secrets" (link it to Azure Key Vault) providing
+#   SHOP_USER_EMAIL, SHOP_USER_PASSWORD, API_USER_EMAIL, API_USER_PASSWORD, (optional) ANTHROPIC_API_KEY
+# Optional: service connection "azure-reports" + storage account for publishing the HTML report.
+
+trigger:
+  branches: { include: [main] }
+pr:
+  branches: { include: [main] }
+
+schedules:
+  - cron: '0 1 * * *'            # nightly full cross-browser regression
+    displayName: Nightly regression
+    branches: { include: [main] }
+    always: true
+
+parameters:
+  - name: testEnv
+    type: string
+    default: prod
+    values: [dev, qa, prod]
+  - name: grep
+    displayName: Tag filter (blank = all). PRs default to @smoke
+    type: string
+    default: ''
+  - name: publishToBlob
+    type: boolean
+    default: false
+
+variables:
+  - group: playwright-secrets
+  - name: PLAYWRIGHT_IMAGE
+    value: mcr.microsoft.com/playwright:v1.65.1-noble   # keep in sync with package.json
+  - name: GREP
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: '@smoke'
+    ${{ else }}:
+      value: ${{ parameters.grep }}
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Quality
+    displayName: Static checks
+    jobs:
+      - job: lint_typecheck
+        container: $(PLAYWRIGHT_IMAGE)
+        steps:
+          - task: Cache@2
+            inputs: { key: 'npm | "$(Agent.OS)" | package-lock.json', path: $(Pipeline.Workspace)/.npm, restoreKeys: 'npm | "$(Agent.OS)"' }
+          - script: npm ci --cache $(Pipeline.Workspace)/.npm --no-audit --no-fund
+            displayName: Install
+          - script: npm run typecheck && npm run lint
+            displayName: Typecheck + lint
+          - script: npm run test:unit
+            displayName: Framework unit tests
+
+  - stage: Test
+    displayName: Playwright (sharded)
+    dependsOn: Quality
+    jobs:
+      - job: pw
+        displayName: Shard
+        timeoutInMinutes: 60
+        container:
+          image: $(PLAYWRIGHT_IMAGE)
+          options: --ipc=host --init
+        strategy:
+          matrix:
+            shard1: { SHARD: '1' }
+            shard2: { SHARD: '2' }
+            shard3: { SHARD: '3' }
+            shard4: { SHARD: '4' }
+        variables:
+          SHARD_TOTAL: 4
+        steps:
+          - task: Cache@2
+            inputs: { key: 'npm | "$(Agent.OS)" | package-lock.json', path: $(Pipeline.Workspace)/.npm, restoreKeys: 'npm | "$(Agent.OS)"' }
+          - script: npm ci --cache $(Pipeline.Workspace)/.npm --no-audit --no-fund
+            displayName: Install
+          - script: |
+              npm run test -- --shard=$(SHARD)/$(SHARD_TOTAL) ${GREP:+--grep "$GREP"}
+            displayName: Run tests (shard $(SHARD)/$(SHARD_TOTAL))
+            env:
+              CI: 'true'
+              TEST_ENV: ${{ parameters.testEnv }}
+              SHOP_USER_EMAIL: $(SHOP_USER_EMAIL)
+              SHOP_USER_PASSWORD: $(SHOP_USER_PASSWORD)
+              API_USER_EMAIL: $(API_USER_EMAIL)
+              API_USER_PASSWORD: $(API_USER_PASSWORD)
+              ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: test-results/junit.xml
+              testRunTitle: Playwright shard $(SHARD)
+              mergeTestResults: true
+          - publish: blob-report
+            artifact: blob-report-$(SHARD)
+            condition: succeededOrFailed()
+          - publish: test-results/flaky
+            artifact: flaky-run-$(SHARD)
+            condition: succeededOrFailed()
+          - publish: .healing
+            artifact: healing-$(SHARD)
+            condition: and(succeededOrFailed(), exists('.healing'))
+            continueOnError: true
+
+  - stage: Report
+    displayName: Merge reports + flaky analysis
+    dependsOn: Test
+    condition: succeededOrFailed()
+    jobs:
+      - job: merge
+        container: $(PLAYWRIGHT_IMAGE)
+        steps:
+          - script: npm ci --no-audit --no-fund
+            displayName: Install
+          - download: current
+            patterns: 'blob-report-*/**'
+          - download: current
+            patterns: 'flaky-run-*/**'
+          - script: |
+              mkdir -p all-blob-reports
+              cp $(Pipeline.Workspace)/blob-report-*/* all-blob-reports/
+              PLAYWRIGHT_HTML_OPEN=never npx playwright merge-reports --reporter=html,json ./all-blob-reports
+            displayName: Merge shard reports
+          # Rolling flaky history survives between runs through the pipeline cache.
+          - task: Cache@2
+            inputs: { key: 'flaky | "$(Agent.OS)" | $(Build.BuildId)', restoreKeys: 'flaky | "$(Agent.OS)"', path: .flaky }
+          - script: npx tsx scripts/analyze-flaky.ts --dir=$(Pipeline.Workspace)
+            displayName: Flaky analysis
+            continueOnError: true       # switch to a hard gate with --fail-on-flaky once the suite is clean
+          - publish: playwright-report
+            artifact: playwright-html-report
+            condition: succeededOrFailed()
+          - publish: test-results/flaky-health.md
+            artifact: flaky-health
+            condition: succeededOrFailed()
+          - ${{ if eq(parameters.publishToBlob, true) }}:
+              - task: AzureCLI@2
+                displayName: Upload report to Azure Blob static site
+                inputs:
+                  azureSubscription: azure-reports
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    az storage blob upload-batch --account-name $(REPORT_STORAGE_ACCOUNT) \
+                      --auth-mode login -d '$web/$(Build.BuildId)' -s playwright-report --overwrite

@@ -1,0 +1,23 @@
+services:
+  tests:
+    build: .
+    init: true          # reaps zombie browser processes
+    ipc: host           # avoids Chromium out-of-memory crashes
+    env_file: [.env]
+    environment:
+      CI: "true"
+    volumes:
+      - ./test-results:/app/test-results
+      - ./playwright-report:/app/playwright-report
+      - ./.flaky:/app/.flaky
+      - ./.healing:/app/.healing
+    command: ["test"]            # e.g. `docker compose run --rm tests test:smoke`
+
+  # Offline self-test target for the API suite (no internet needed):
+  #   docker compose --profile mock up -d mock-api
+  #   docker compose run --rm -e API_BASE_URL=http://mock-api:4010/api/v1 tests test:api
+  mock-api:
+    profiles: [mock]
+    build: .
+    entrypoint: ["npx", "tsx", "scripts/mock-api-server.ts"]
+    expose: ["4010"]
