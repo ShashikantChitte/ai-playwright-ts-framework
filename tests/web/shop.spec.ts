@@ -34,7 +34,7 @@ test.describe('Shop landing (categories)', () => {
     page.on('pageerror', (e) => {
       if (!KNOWN_SITE_ERRORS.some((re) => re.test(e.message))) errors.push(e.message);
     });
-    await page.reload();
+    await page.goto(page.url(), { waitUntil: 'load' });
     await expect(page).toHaveTitle(/.+/);
     expect(errors, 'uncaught page errors').toEqual([]);
   });
