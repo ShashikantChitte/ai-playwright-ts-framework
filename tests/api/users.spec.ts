@@ -12,31 +12,39 @@ test.describe('API users CRUD', () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
-  test('create -> read -> update -> delete', { tag: ['@regression', '@api'] }, async ({ authedApi }) => {
-    const users = new ResourceApi<User>(authedApi, ENDPOINTS.users);
-    const payload = buildUser();
+  test(
+    'create -> read -> update -> delete',
+    { tag: ['@regression', '@api'] },
+    async ({ authedApi }) => {
+      const users = new ResourceApi<User>(authedApi, ENDPOINTS.users);
+      const payload = buildUser();
 
-    const created = await users.create(payload as Partial<User>);
-    expect([200, 201]).toContain(created.status);
-    const user = UserSchema.parse(unwrap(created.body));
+      const created = await users.create(payload as Partial<User>);
+      expect([200, 201], JSON.stringify(created.body)).toContain(created.status);
+      const user = UserSchema.parse(unwrap(created.body));
 
-    try {
-      const fetched = await users.get(user.id);
-      expect(fetched.status).toBe(200);
-      expect(UserSchema.parse(unwrap(fetched.body)).id).toBe(user.id);
+      try {
+        const fetched = await users.get(user.id);
+        expect(fetched.status).toBe(200);
+        expect(UserSchema.parse(unwrap(fetched.body)).id).toBe(user.id);
 
-      const updated = await users.patch(user.id, { name: 'Renamed QA User' });
-      expect([200, 204]).toContain(updated.status);
-    } finally {
-      const removed = await users.remove(user.id);
-      expect([200, 202, 204]).toContain(removed.status);
-    }
+        const updated = await users.patch(user.id, { firstName: 'Renamed' });
+        expect([200, 204], JSON.stringify(updated.body)).toContain(updated.status);
+      } finally {
+        const removed = await users.remove(user.id);
+        expect([200, 202, 204]).toContain(removed.status);
+      }
 
-    expect((await users.get(user.id)).status).toBe(404);
-  });
+      expect((await users.get(user.id)).status).toBe(404);
+    },
+  );
 
-  test('protected route rejects anonymous callers', { tag: ['@regression', '@api', '@security'] }, async ({ authedApi }) => {
-    const res = await authedApi.get(ENDPOINTS.users, { anonymous: true });
-    expect([401, 403]).toContain(res.status);
-  });
+  test(
+    'protected route rejects anonymous callers',
+    { tag: ['@regression', '@api', '@security'] },
+    async ({ authedApi }) => {
+      const res = await authedApi.get(ENDPOINTS.users, { anonymous: true });
+      expect([401, 403]).toContain(res.status);
+    },
+  );
 });
