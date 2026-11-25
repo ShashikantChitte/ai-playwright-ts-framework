@@ -10,4 +10,5 @@ export const ENDPOINTS = {
   users: 'users',
   orders: 'orders',
   products: 'products',
+  me: 'auth/me',
 } as const;
